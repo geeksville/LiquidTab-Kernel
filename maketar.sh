@@ -1,8 +1,11 @@
 #/bin/bash +x
 # temporary build script to save me some typing...I'll do a proper one later
 
-WDIR="/home/rodderik/LiquidTab-Kernel"
-CC="/usr/local/toolchain/arm-2009q3/bin/arm-none-linux-gnueabi-"
+export TOOLCHAIN=/home/kevin/Packages/arm-2009q3/bin
+export TOOLCHAIN_PREFIX=arm-none-linux-gnueabi-
+
+WDIR="/home/kevin/development/android/rodderick/LiquidTab-Kernel"
+CC="$TOOLCHAIN/$TOOLCHAIN_PREFIX"
 DEFCONFIG="p1_defconfig"
 OUTNAME="p100kernel"
 
