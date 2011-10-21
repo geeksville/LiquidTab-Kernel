@@ -577,12 +577,14 @@ static int s3c_queue(struct usb_ep *_ep, struct usb_request *_req,
 	_req->status = -EINPROGRESS;
 	_req->actual = 0;
 
+#if 0
 	/* kickstart this i/o queue? */
 	DEBUG("\n*** %s: %s-%s req = %p, len = %d, buf = %p"
 		"Q empty = %d, stopped = %d\n",
 		__func__, _ep->name, ep_is_in(ep) ? "in" : "out",
 		_req, _req->length, _req->buf,
 		list_empty(&ep->queue), ep->stopped);
+#endif
 
 	if (list_empty(&ep->queue) && !ep->stopped) {
 
