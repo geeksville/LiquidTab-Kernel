@@ -154,6 +154,37 @@ void smb136_test_read(void)
 	}
 }
 
+static ssize_t command_read(struct device *dev, struct device_attribute *attr, char *buf)
+{
+  struct smb136_chg_data *chg = smb136_chg;
+  struct i2c_client *client = chg->client;
+  u8 d1, d2;
+
+  smb136_i2c_read(client, SMB_CommandA, &d1);
+  smb136_i2c_read(client, SMB_ChargeCurrent, &d2);
+  return sprintf(buf,"cmd=0x%x current=0x%x\n", d1, d2);
+}
+
+static ssize_t command_write(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+  struct smb136_chg_data *chg = smb136_chg;
+  struct i2c_client *client = chg->client;
+  int v1, v2;
+  u8 addr, data;
+ 
+  printk("input data --> %s\n", buf);
+  if(sscanf(buf, "%x %x", &v1, &v2) == 2) {
+    addr = (u8) v1;
+    data = (u8) v2;
+    smb136_i2c_write(client, addr, data);
+  }
+    
+  return size;
+}
+
+// kevinh - Allow changing USB host/target modes on S3C android devices without a special cable
+static DEVICE_ATTR(command, S_IRUGO | S_IWUSR, command_read, command_write);
+
 int smb136_charging(int en, int cable_status)
 {
 	struct smb136_chg_data *chg = smb136_chg;
@@ -170,7 +201,7 @@ int smb136_charging(int en, int cable_status)
 		if(cable_status==CABLE_TYPE_AC)
 		{
 			//1. HC mode
-			data = 0x8c;	
+		        data = 0x88; // usb host plug detect only works if 0x88 fixme, we want 0x8c for HC mode
 
 			smb136_i2c_write(chg->client, SMB_CommandA, data);
 			udelay(10);
@@ -179,7 +210,7 @@ int smb136_charging(int en, int cable_status)
 			smb136_i2c_write(chg->client, SMB_PinControl, 0x8);
 			udelay(10);
 
-			smb136_i2c_write(chg->client, SMB_CommandA, 0x8c);
+			smb136_i2c_write(chg->client, SMB_CommandA, data);
 			udelay(10);
 
 			//3. Set charge current to 1500mA
@@ -200,7 +231,7 @@ int smb136_charging(int en, int cable_status)
 			smb136_i2c_write(chg->client, SMB_PinControl, 0x8);
 			udelay(10);
 
-			smb136_i2c_write(chg->client, SMB_CommandA, 0x88);
+			smb136_i2c_write(chg->client, SMB_CommandA, data);
 			udelay(10);
 
 			// 3. Set charge current to 500mA
@@ -246,6 +277,95 @@ int smb136_charging(int en, int cable_status)
 
 	return 0;
 }
+
+// FIXME, call this to turn on the 5V output to power external USB targets from the tablet
+void smb136_set_otg_mode(int enable)
+{
+	struct smb136_chg_data *chg = smb136_chg;
+	struct i2c_client *client = chg->client;
+	u8 data;
+
+	printk("[SMB136] %s (enable : %d)\n", __func__, enable);
+
+	if(!charger_i2c_init) {
+		printk("%s : smb136 charger IC i2c is not initialized!!\n", __func__);
+		return ;
+	}
+
+	if(enable)  // Enable OTG Mode
+	{
+		// 1. Set OTG Mode (Clear Bit5 of Pin Control)
+		smb136_i2c_read(client, SMB_PinControl, &data);
+		data &= ~(0x1 << 5);
+		smb136_i2c_write(client, SMB_PinControl, data);
+		udelay(10);
+
+		// 2. Enable OTG Mode (Set Bit1 of Command Register A)
+		smb136_i2c_read(client, SMB_CommandA, &data);
+		data |= (0x1 << 1);
+		smb136_i2c_write(client, SMB_CommandA, data);
+		udelay(10);
+	}
+	else  // Re-init charger IC
+	{
+		// 1. Allow volatile writes to 00~09h, USB 500mA Mode, USB5/1 Mode
+		data = 0x88;
+		smb136_i2c_write(client, SMB_CommandA, data);
+		udelay(10);
+
+		// 2. Change USB5/1/HC Control from Pin to I2C
+		data = 0x08;
+		smb136_i2c_write(client, SMB_PinControl, data);
+		udelay(10);
+
+		// 3. Allow volatile writes to 00~09h, USB 500mA Mode, USB5/1 Mode
+		data = 0x88;
+		smb136_i2c_write(client, SMB_CommandA, data);
+		udelay(10);
+
+		// 4. Disable Automatic Input Current Limit
+		data = 0xe6;
+		smb136_i2c_write(client, SMB_InputCurrentLimit, data);
+		udelay(10);
+
+		//5. Fast Charge Current set 500mA
+#ifdef CONFIG_TARGET_LOCALE_VZW
+		data = 0xf2;
+#else 
+		data = 0xf4;
+#endif
+		smb136_i2c_write(client, SMB_ChargeCurrent, data);
+		udelay(10);
+
+		//6. Automatic Recharge Disabed
+		data = 0x8c;
+		smb136_i2c_write(client, SMB_ControlA, data);
+		udelay(10);
+
+		//7. Safty timer Disabled
+		data = 0x28;
+		smb136_i2c_write(client, SMB_ControlB, data);
+		udelay(10);
+
+		//8. Disable USB D+/D- Detection
+		data = 0x28;
+		smb136_i2c_write(client, SMB_OTGControl, data);
+		udelay(10);
+
+		//9. Set Output Polarity for STAT
+		data = 0xca;
+		smb136_i2c_write(client, SMB_FloatVoltage, data);
+		udelay(10);
+
+		//10. Re-load Enable
+		data = 0x4b;
+		smb136_i2c_write(client, SMB_SafetyTimer, data);
+		udelay(10);
+	}
+
+	smb136_test_read();
+}
+EXPORT_SYMBOL(smb136_set_otg_mode);
 
 static irqreturn_t smb136_irq_thread(int irq, void *data)
 {
@@ -333,6 +453,9 @@ static int smb136_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 	if (ret)
 		goto err_pdata;
 
+	if (device_create_file(&client->dev, &dev_attr_command) < 0)
+		printk("Failed to create device file(%s)!\n", dev_attr_command.attr.name);
+	
 	smb136_test_read();
 	
 	return 0;
