@@ -118,6 +118,7 @@ static unsigned int ep_fifo_size =  512;
 static unsigned int ep_fifo_size2 = 1024;
 static int reset_available = 1;
 static int g_clocked = 0;
+static int g_otgModeDesired = 0;
 
 /*
   Local declarations.
@@ -485,6 +486,95 @@ int s3c_udc_power(struct s3c_udc *dev, char en)
 	return 0;
 }
 
+#ifdef CONFIG_USB_S3C_OTG_HOST
+atomic_t g_OtgHostMode;
+extern struct platform_driver s5pc110_otg_driver;
+
+int s3c_is_otgmode(void)
+{
+	DEBUG("otgmode = %d\n", atomic_read(&g_OtgHostMode));
+
+	return atomic_read(&g_OtgHostMode);
+}
+
+EXPORT_SYMBOL(s3c_is_otgmode);
+
+void set_otghost_mode(void) {
+  struct s3c_udc *dev = the_controller;
+
+  DEBUG("Setting OTG host mode\n");
+  // fsa9480_enable_interrupt(0);
+
+  free_irq(IRQ_OTG, dev);
+
+  // This init is no longer needed - it is done by the target mode driver
+  //max8998_ldo3_8_control(1, LDO_USB);
+  //mdelay(200); // kevinh, was 1 - but give a longer time for the LDO to power up
+  //otg_clock_enable(1);
+
+  if (platform_driver_register(&s5pc110_otg_driver) < 0) 
+    {		
+      DEBUG("platform_driver_register failed...\n");
+      atomic_set(&g_OtgHostMode , 0);
+    }
+  else {
+    DEBUG("platform_driver_register...\n");
+    atomic_set(&g_OtgHostMode , 1);
+  }
+}
+
+int s3c_usb_sethost(int ishost)
+{
+  struct s3c_udc *dev = the_controller;
+  int retval;
+
+  printk("s3c_usb_sethost: %d\n", ishost);
+  
+  g_otgModeDesired = 0;
+
+  if(!ishost) {
+    DEBUG("USB host mode cable detached...\n");
+		   
+    if(atomic_read(&g_OtgHostMode)) {
+      platform_driver_unregister(&s5pc110_otg_driver);
+      DEBUG("platform_driver_unregister...\n");
+    }
+
+    /* irq setup after old hardware state is cleaned up */
+    retval = request_irq(IRQ_OTG, s3c_udc_irq, 0, driver_name, dev);
+    if (retval != 0) {
+      DEBUG("can't get irq %i, err %d\n", IRQ_OTG, retval);
+      return -EBUSY;
+    }
+
+    atomic_set(&g_OtgHostMode , 0);
+  }
+  else {
+    if(!atomic_read(&g_OtgHostMode)) {
+      DEBUG("USB Host mode cable attached\n");
+
+      // If we are not already in USB target mode, that must mean that we just detected the USBID bit but
+      // haven't yet received external power.  In that case, mark that we would like to go into host mode and
+      // wait until we are called with USB_CABLE_ATTACHED.
+      if(!g_clocked) {
+	DEBUG("Delaying init because we don't see ext power\n");
+	g_otgModeDesired = 1;
+      }
+      else
+	set_otghost_mode();
+    }
+    else {
+      DEBUG("already OtgHost Mode!!~~\n");
+    }
+  }
+
+  return 0;
+}
+
+EXPORT_SYMBOL(s3c_usb_sethost);
+
+#endif
+
 int s3c_vbus_enable(struct usb_gadget *gadget, int enable)
 {
 	unsigned long flags;
@@ -505,6 +595,12 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int enable)
 	if (dev->udc_enabled != enable) {
 		dev->udc_enabled = enable;
 		if (!enable) {
+		  // If we were in host mode, force that driver to exit
+		  if(s3c_is_otgmode()) { 		       
+		    DEBUG("Lost USB power, forcing host mode exit...\n");
+		    s3c_usb_sethost(0);
+		  }
+
 			spin_lock_irqsave(&dev->lock, flags);
 			stop_activity(dev, dev->driver);
 			spin_unlock_irqrestore(&dev->lock, flags);
@@ -516,6 +612,13 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int enable)
 			otg_clock_enable(dev,1);
 			udc_reinit(dev);
 			udc_enable(dev);
+
+			// Power was just detected, if we've been waiting to enter host mode, do
+			// it now.
+			if(g_otgModeDesired) {
+			  DEBUG("USB power detected, so we are entering host mode...\n");
+			  s3c_usb_sethost(1);
+			}
 		}
 	} else {
 		dev_info(&dev->gadget.dev, "%s, udc : %d, en : %d\n",
@@ -538,8 +641,7 @@ static void done(struct s3c_ep *ep, struct s3c_request *req, int status)
 {
 	unsigned int stopped = ep->stopped;
 	struct device *dev = &the_controller->dev->dev;
-	DEBUG("%s: %s %p, req = %p, stopped = %d\n",
-		__func__, ep->ep.name, ep, &req->req, stopped);
+	// DEBUG("%s: %s %p, req = %p, stopped = %d\n", __func__, ep->ep.name, ep, &req->req, stopped);
 
 	list_del_init(&req->queue);
 
@@ -1390,144 +1492,6 @@ static int s3c_udc_resume(struct platform_device *pdev)
 #define s3c_udc_resume  NULL
 #endif /* CONFIG_PM */
 
-#ifdef CONFIG_USB_S3C_OTG_HOST
-atomic_t g_OtgHostMode;
-extern struct platform_driver s5pc110_otg_driver;
-
-int s3c_is_otgmode(void)
-{
-	DEBUG("otgmode = %d\n", atomic_read(&g_OtgHostMode));
-
-	return atomic_read(&g_OtgHostMode);
-}
-
-EXPORT_SYMBOL(s3c_is_otgmode);
-
-void set_otghost_mode(void) {
-  struct s3c_udc *dev = the_controller;
-
-  DEBUG("Setting OTG host mode\n");
-  // fsa9480_enable_interrupt(0);
-
-  free_irq(IRQ_OTG, dev);
-
-  // This init is no longer needed - it is done by the target mode driver
-  //max8998_ldo3_8_control(1, LDO_USB);
-  //mdelay(200); // kevinh, was 1 - but give a longer time for the LDO to power up
-  //otg_clock_enable(1);
-
-  if (platform_driver_register(&s5pc110_otg_driver) < 0) 
-    {		
-      DEBUG("platform_driver_register failed...\n");
-      atomic_set(&g_OtgHostMode , 0);
-    }
-  else {
-    DEBUG("platform_driver_register...\n");
-    atomic_set(&g_OtgHostMode , 1);
-  }
-}
-
-int s3c_usb_sethost(int ishost)
-{
-	struct s3c_udc *dev = the_controller;
-	int retval;
-
-	printk("s3c_usb_sethost: %d\n", ishost);
-
-#if 0
-	  // This is a hack that only Mission/kevinh probably want.  Sometimes
-	  // we detect power on our connector before we detect the interrupt for accessory
-	  // attach.  Do one last check to force host mode if needed.
-	  int forceHost = !gpio_get_value(GPIO_DOCK_INT) && !g_otgModeDesired; 
-	  if(forceHost) {
-	    if(connected == USB_CABLE_ATTACHED) {
-	      printk("Forcing USB host mode\n");
-	      connected = USB_OTG_HOST_ATTACHED;
-	    }
-	    else if(connected == USB_CABLE_DETACHED) {
-	      printk("Forcing USB host disconnect\n");
-	      connected = USB_OTG_HOST_DETACHED;
-	    }
-	  }
-#endif
-	
-#if 0
-		case USB_CABLE_DETACHED:
-			spin_lock_irqsave(&dev->lock,flags);
-			stop_activity(dev, dev->driver);
-			spin_unlock_irqrestore(&dev->lock,flags);
-			udc_disable(dev);
-			otg_clock_enable(0);
-			max8998_ldo3_8_control(0, LDO_USB);
-			break;
-		case USB_CABLE_ATTACHED:
-			max8998_ldo3_8_control(1, LDO_USB);
-			mdelay(1);
-			otg_clock_enable(1);
-			udc_reinit(dev);
-			udc_enable(dev);
-
-			if(g_otgModeDesired) {
-			  set_otghost_mode();
-			  g_otgModeDesired = 0;
-			}
-			break;
-#endif
-
-  if(!ishost) {
-		        DEBUG("USB host mode cable detached...\n");
-		   
-			//if(g_otgModeDesired) {
-			//  g_otgModeDesired = 0;
-			//  break;
-			//}
-
-			//otg_clock_enable(dev,0);
-			//s3c_udc_power(dev, 0);
-
-			if(atomic_read(&g_OtgHostMode))
-			{
-				platform_driver_unregister(&s5pc110_otg_driver);
-				DEBUG("platform_driver_unregister...\n");
-			}
-
-			/* irq setup after old hardware state is cleaned up */
-			retval = request_irq(IRQ_OTG, s3c_udc_irq, 0, driver_name, dev);
-			if (retval != 0) {
-			  DEBUG("can't get irq %i, err %d\n", IRQ_OTG, retval);
-			  return -EBUSY;
-			}
-
-			// fsa9480_enable_interrupt(1);
-
-			atomic_set(&g_OtgHostMode , 0);
-			}
-  else {
-			if(!atomic_read(&g_OtgHostMode))
-			{
-				DEBUG("USB Host mode cable attached\n");
-
-				// If we are not already in USB target mode, that must mean that we just detected the USBID bit but
-				// haven't yet received external power.  In that case, mark that we would like to go into host mode and
-				// wait until we are called with USB_CABLE_ATTACHED.
-				//if(!g_clocked) {
-				//  S3C_UDC_DBG("Delaying init because we don't see ext power\n");
-				//  g_otgModeDesired = 1;
-				//	}
-				//  else
-				  set_otghost_mode();
-			}
-			else {
-				DEBUG("already OtgHost Mode!!~~\n");
-			}
-  }
-
-  return 0;
-}
-
-EXPORT_SYMBOL(s3c_usb_sethost);
-
-#endif
 
 /*-------------------------------------------------------------------------*/
 static struct platform_driver s3c_udc_driver = {
