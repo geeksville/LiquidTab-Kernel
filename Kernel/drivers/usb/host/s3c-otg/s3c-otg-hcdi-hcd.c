@@ -492,9 +492,11 @@ int		s5pc110_otghcd_urb_dequeue(struct usb_hcd *_hcd, struct urb *_urb, int stat
 	unsigned long	spin_lock_flag = 0;
 	td_t *cancel_td;
 
-	/* Dequeue should be performed only if endpoint is enabled */
-	if (_urb->ep->enabled == 0)
+	/* If we are not enabled, just give the URB back to the USB layer */
+	if (_urb->ep->enabled == 0) {
+		usb_hcd_giveback_urb(_hcd, _urb, status);
 		return USB_ERR_SUCCESS;
+	}
 		
 	spin_lock_irq_save_otg(&otg_hcd_spin_lock, spin_lock_flag);
 
