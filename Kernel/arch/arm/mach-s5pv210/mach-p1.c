@@ -2664,7 +2664,10 @@ static void fsa9480_usb_cb(bool attached)
 		}
 	}
 
-	set_cable_status = attached ? CABLE_TYPE_USB : CABLE_TYPE_NONE;
+	printk("kevinh forcing high-current charging - you probably don't want this\n");
+	// set_cable_status = attached ? CABLE_TYPE_USB : CABLE_TYPE_NONE;
+	set_cable_status = attached ? CABLE_TYPE_AC : CABLE_TYPE_NONE;
+
 	if (callbacks && callbacks->set_cable)
 		callbacks->set_cable(callbacks, set_cable_status);
 

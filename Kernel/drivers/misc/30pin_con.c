@@ -489,6 +489,10 @@ void acc_notified(int acc_adc)
 	}
 	
 }
+
+void smb136_set_otg_mode(int enable);
+
+
 void acc_ID_intr_handle(struct work_struct *_work)
 {
 	//ACC_CONDEV_DBG("");
@@ -521,9 +525,14 @@ void acc_ID_intr_handle(struct work_struct *_work)
 			acc_notified(adc_val);
 			set_irq_type(IRQ_DOCK_INT, IRQ_TYPE_EDGE_RISING);
 #ifdef CONFIG_USB_S3C_OTG_HOST
-		// check USB OTG Host ADC range...
-			if(usbmodeChar == 'a') {
-			  ACC_CONDEV_DBG("kevinh forcing USBOTG");
+			if(adc_val > 2700 && adc_val < 2799) {
+			  ACC_CONDEV_DBG("Detected Samsung USB host dongle - activating 5V power");
+			  smb136_set_otg_mode(1);
+			  msleep(100);
+			  s3c_usb_sethost(1);
+			}
+			else if(usbmodeChar == 'a') {
+			  ACC_CONDEV_DBG("kevinh/Mission motor specific - forcing USBOTG");
 			  // kevinh hack if(adc_val > 2700 && adc_val < 2799) {
 			  s3c_usb_sethost(1);
 			  // }

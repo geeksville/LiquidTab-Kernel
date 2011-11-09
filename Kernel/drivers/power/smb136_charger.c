@@ -196,6 +196,7 @@ int smb136_charging(int en, int cable_status)
 	}
 
 	printk("%s : enable(%d), cable_status(%d)\n",__func__,en, cable_status);
+	dump_stack();
 
 	if(en) {  // enable
 		if(cable_status==CABLE_TYPE_AC)
@@ -276,6 +277,17 @@ int smb136_charging(int en, int cable_status)
 	}
 
 	return 0;
+}
+
+int smb136_is_otg_mode(void) 
+{
+  struct smb136_chg_data *chg = smb136_chg;
+  struct i2c_client *client = chg->client;
+  u8 data = 0;
+
+  smb136_i2c_read(client, SMB_CommandA, &data);
+
+  return data & (1 << 1) ? 1 : 0;
 }
 
 // FIXME, call this to turn on the 5V output to power external USB targets from the tablet

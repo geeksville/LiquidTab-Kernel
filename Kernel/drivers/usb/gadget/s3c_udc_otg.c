@@ -119,6 +119,8 @@ static unsigned int ep_fifo_size2 = 1024;
 static int reset_available = 1;
 static int g_clocked = 0;
 static int g_otgModeDesired = 0;
+static int g_isConnected = 0;
+static int g_isInited = 0;
 
 /*
   Local declarations.
@@ -556,8 +558,16 @@ int s3c_usb_sethost(int ishost)
       // If we are not already in USB target mode, that must mean that we just detected the USBID bit but
       // haven't yet received external power.  In that case, mark that we would like to go into host mode and
       // wait until we are called with USB_CABLE_ATTACHED.
-      if(!g_clocked) {
+      if(!g_isConnected) {
 	DEBUG("Delaying init because we don't see ext power\n");
+	g_otgModeDesired = 1;
+      }
+      else if(!g_clocked) {
+	DEBUG("Delaying init because we haven't configured clocks\n");
+	g_otgModeDesired = 1;
+      }
+      else if(!g_isInited) {
+	DEBUG("Delaying init because we haven't inited USB gadget\n");
 	g_otgModeDesired = 1;
       }
       else
@@ -599,6 +609,8 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int enable)
 		  if(s3c_is_otgmode()) { 		       
 		    DEBUG("Lost USB power, forcing host mode exit...\n");
 		    s3c_usb_sethost(0);
+		    g_otgModeDesired = 1; // We'd like to go back into host mode as soon as power
+		    // comes back
 		  }
 
 			spin_lock_irqsave(&dev->lock, flags);
@@ -613,10 +625,12 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int enable)
 			udc_reinit(dev);
 			udc_enable(dev);
 
+			g_isConnected = 1;
+
 			// Power was just detected, if we've been waiting to enter host mode, do
 			// it now.
 			if(g_otgModeDesired) {
-			  DEBUG("USB power detected, so we are entering host mode...\n");
+			  DEBUG("USB clock enabled, so we are entering host mode...\n");
 			  s3c_usb_sethost(1);
 			}
 		}
@@ -1097,6 +1111,17 @@ void s3c_udc_soft_connect(void)
 	/* Unmask the core interrupt */
 	writel(readl(S3C_UDC_OTG_GINTSTS), S3C_UDC_OTG_GINTSTS);
 	writel(GINTMSK_INIT, S3C_UDC_OTG_GINTMSK);
+
+#if 1
+	g_isInited = 1;
+
+	// Power was just detected, if we've been waiting to enter host mode, do
+	// it now.
+	if(g_otgModeDesired) {
+	  DEBUG("USB power detected, so we are entering host mode...\n");
+	  s3c_usb_sethost(1);
+	}
+#endif
 }
 
 void s3c_udc_soft_disconnect(void)
@@ -1118,6 +1143,7 @@ void s3c_udc_soft_disconnect(void)
 	stop_activity(dev, dev->driver);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
+	// g_isConnected = 0;
 }
 
 static int s3c_udc_pullup(struct usb_gadget *gadget, int is_on)

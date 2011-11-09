@@ -340,12 +340,13 @@ __inline__ int root_hub_feature(const u8 port,
 			case USB_PORT_FEAT_C_CONNECTION:
 				otg_dbg(OTG_DBG_ROOTHUB, 
 					"case ClearPortFeature -USB_PORT_FEAT_C_CONNECTION \n");
+
 				/*
 				// Now that the kernel has acked our loss of connection, we need to reset the port so it will
 				// be ready to detect the _next_ connection
 				otg_dbg(OTG_DBG_ROOTHUB, "kevinh Reenabling the port\n");
 				reset_and_enable_port(0);
-				port_flag.g.port_enable_change = 1; // tell the kernel enable has now changed
+				port_flag.b.port_enable_change = 1; // tell the kernel enable has now changed
 				*/
 
 				/* Clears drivers internal connect status change

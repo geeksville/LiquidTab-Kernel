@@ -762,7 +762,9 @@ static bool check_samsung_charger(void)
 		{
 			pr_info("%s: Improper charger is connected!!!\n", __func__);
 			fsa9480_manual_switching(AUTO_SWITCH);
-			return false;
+			printk("But allowing it anyways!\n");
+			return true;
+			//return false;
 		}	
 	}
 	
